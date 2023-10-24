@@ -1,83 +1,62 @@
-#!/bin/python3 env
-
 import pygame
+import socket
+import threading
+import json
 from pygame.locals import *
-import random
 
 WINDOW_SIZE = (600, 600)
 PIXEL_SIZE = 10
-
-def collision (pos1, pos2):
-    return pos1 == pos2
-
-def off_limits(pos):
-    if 0 <= pos[0] < WINDOW_SIZE[0] and 0 <= pos[1] < WINDOW_SIZE[1]:
-        return False
-    else:
-        return True
-
-def random_on_grid():
-    x = random.randint(0, WINDOW_SIZE[0])
-    y = random.randint(0, WINDOW_SIZE[1])
-    return x // PIXEL_SIZE * PIXEL_SIZE, y // PIXEL_SIZE * PIXEL_SIZE
-
 
 pygame.init()
 screen = pygame.display.set_mode((WINDOW_SIZE))
 pygame.display.set_caption('Snake')
 
-snake_pos = [(250, 50), (260, 50), (270, 50)]
 snake_surface = pygame.Surface((PIXEL_SIZE, PIXEL_SIZE))
 snake_surface.fill((255, 255, 255))
+
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client_socket.connect(("192.168.2.96", 7777))
+
+# Receba o id da snake do servidor
+snake_id = int(client_socket.recv(4096))
+
 snake_direction = K_LEFT
+game_state = {'snakes': []}
 
-apple_surface = pygame.Surface((PIXEL_SIZE, PIXEL_SIZE))
-apple_surface.fill((255, 0, 0))
-apple_pos = random_on_grid()
 
-def restart_game():
-    global snake_pos
-    global apple_pos
-    global snake_direction
-    snake_pos = [(250, 50), (260, 50), (270, 50)]
-    snake_direction = K_LEFT
-    apple_pos = random_on_grid()
+def receive_game_state():
+    global game_state
+    while True:
+        # Receba o estado do jogo do servidor
+        data = client_socket.recv(4096)
+        if not data:
+            break  # Servidor desconectado
+        game_state = json.loads(data)
+
+
+# Inicie uma nova thread para receber o estado do jogo
+receive_thread = threading.Thread(target=receive_game_state)
+receive_thread.start()
 
 while True:
     pygame.time.Clock().tick(15)
-    screen.fill((0, 0, 0))
     for event in pygame.event.get():
-        if event.type == quit:
-            restart_game()
+        if event.type == QUIT:
+            pygame.quit()
+            client_socket.close()
+            exit()
         elif event.type == KEYDOWN:
             if event.key in [K_UP, K_DOWN, K_LEFT, K_RIGHT]:
                 snake_direction = event.key
+                # Envie a nova direção ao servidor
+                msg = json.dumps({'id': snake_id, 'direction': snake_direction})
+                client_socket.sendall(bytes(msg, 'utf-8'))
 
-    screen.blit(apple_surface, apple_pos)
-
-    if collision(apple_pos, snake_pos[0]):
-        snake_pos.append((-10, -10))
-        apple_pos = random_on_grid()
-
-    for pos in snake_pos:
-        screen.blit(snake_surface, pos)
-
-    for i in range(len(snake_pos)-1, 0, -1):
-        if collision(snake_pos[0], snake_pos[i]):
-            restart_game()
-        snake_pos[i] = snake_pos[i-1]
-
-    if off_limits(snake_pos[0]):
-        restart_game()
-
-    if snake_direction == K_UP:
-        snake_pos[0] = (snake_pos[0] [0], snake_pos[0] [1] - PIXEL_SIZE)
-    elif snake_direction == K_DOWN:
-        snake_pos[0] = (snake_pos[0] [0], snake_pos [0] [1] + PIXEL_SIZE)
-    elif  snake_direction == K_LEFT:
-        snake_pos[0] = (snake_pos[0][0] - PIXEL_SIZE, snake_pos[0][1])
-    elif snake_direction == K_RIGHT:
-        snake_pos[0] = (snake_pos[0][0] + PIXEL_SIZE, snake_pos[0][1])
-
-
+    # Renderize o estado do jogo
+    screen.fill((0, 0, 0))
+    for snake_pos in game_state['snakes']:
+        for pos in snake_pos:
+            screen.blit(snake_surface, pos)
     pygame.display.update()
+
+client_socket.close()
